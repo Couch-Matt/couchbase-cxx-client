@@ -19,6 +19,7 @@
 
 #include "core/logger/logger.hxx"
 #include "core/operations/management/freeform.hxx"
+#include "core/transactions.hxx"
 #include "core/utils/connection_string.hxx"
 #include "core/utils/json.hxx"
 #include "logger.hxx"
@@ -192,6 +193,16 @@ integration_test_guard::load_pools_info(bool refresh)
     }
 
     return p_response;
+}
+
+auto
+integration_test_guard::number_of_query_nodes() -> std::size_t
+{
+    const auto& ci = load_cluster_info();
+    const auto result = std::count_if(ci.nodes.begin(), ci.nodes.end(), [](const auto& node) {
+        return std::find(node.services.begin(), node.services.end(), "n1ql") != node.services.end();
+    });
+    return static_cast<std::size_t>(result);
 }
 
 server_version

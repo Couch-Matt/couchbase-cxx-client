@@ -45,18 +45,8 @@ transactions_cleanup::transactions_cleanup(core::cluster cluster, const couchbas
   : cluster_(std::move(cluster))
   , config_(config)
   , client_uuid_(uid_generator::next())
-  , running_(config.cleanup_config.cleanup_client_attempts || config.cleanup_config.cleanup_lost_attempts)
 {
-    if (config.cleanup_config.cleanup_client_attempts) {
-        cleanup_thr_ = std::thread(std::bind(&transactions_cleanup::attempts_loop, this));
-    }
-    if (config_.metadata_collection) {
-        add_collection(
-          { config_.metadata_collection->bucket, config_.metadata_collection->scope, config_.metadata_collection->collection });
-    }
-    for (auto& k : config_.cleanup_config.collections) {
-        add_collection(k);
-    }
+    start();
 }
 
 static std::uint64_t
@@ -249,7 +239,9 @@ transactions_cleanup::create_client_record(const couchbase::transactions::transa
         wrap_durable_request(req, config_);
         auto barrier = std::make_shared<std::promise<result>>();
         auto f = barrier->get_future();
-        auto ec = config_.cleanup_hooks->client_record_before_create(keyspace.bucket);
+        auto ec = wait_for_hook([this, bucket = keyspace.bucket](auto handler) mutable {
+            return config_.cleanup_hooks->client_record_before_create(bucket, std::move(handler));
+        });
         if (ec) {
             throw client_error(*ec, "client_record_before_create hook raised error");
         }
@@ -285,7 +277,9 @@ transactions_cleanup::get_active_clients(const couchbase::transactions::transact
             .specs();
         auto barrier = std::make_shared<std::promise<result>>();
         auto f = barrier->get_future();
-        auto ec = config_.cleanup_hooks->client_record_before_get(keyspace.bucket);
+        auto ec = wait_for_hook([this, bucket = keyspace.bucket](auto handler) mutable {
+            return config_.cleanup_hooks->client_record_before_get(bucket, std::move(handler));
+        });
         if (ec) {
             throw client_error(*ec, "client_record_before_get hook raised error");
         }
@@ -363,7 +357,9 @@ transactions_cleanup::get_active_clients(const couchbase::transactions::transact
             mut_specs.push_back(couchbase::mutate_in_specs::remove(FIELD_CLIENTS + "." + details.expired_client_ids[idx]).xattr());
         }
         mutate_req.specs = mut_specs.specs();
-        ec = config_.cleanup_hooks->client_record_before_update(keyspace.bucket);
+        ec = wait_for_hook([this, bucket = keyspace.bucket](auto handler) mutable {
+            return config_.cleanup_hooks->client_record_before_update(bucket, std::move(handler));
+        });
         if (ec) {
             throw client_error(*ec, "client_record_before_update hook raised error");
         }
@@ -401,7 +397,9 @@ transactions_cleanup::remove_client_record_from_all_buckets(const std::string& u
               std::chrono::milliseconds(10), std::chrono::milliseconds(250), std::chrono::milliseconds(500), [this, keyspace, uuid]() {
                   try {
                       // proceed to remove the client uuid if it exists
-                      auto ec = config_.cleanup_hooks->client_record_before_remove_client(keyspace.bucket);
+                      auto ec = wait_for_hook([this, bucket = keyspace.bucket](auto handler) mutable {
+                          return config_.cleanup_hooks->client_record_before_remove_client(bucket, std::move(handler));
+                      });
                       if (ec) {
                           throw client_error(*ec, "client_record_before_remove_client hook raised error");
                       }
@@ -546,7 +544,23 @@ transactions_cleanup::add_collection(couchbase::transactions::transaction_keyspa
 }
 
 void
-transactions_cleanup::close()
+transactions_cleanup::start()
+{
+    running_ = config_.cleanup_config.cleanup_client_attempts || config_.cleanup_config.cleanup_lost_attempts;
+    if (config_.cleanup_config.cleanup_client_attempts) {
+        cleanup_thr_ = std::thread(std::bind(&transactions_cleanup::attempts_loop, this));
+    }
+    if (config_.metadata_collection) {
+        add_collection(
+          { config_.metadata_collection->bucket, config_.metadata_collection->scope, config_.metadata_collection->collection });
+    }
+    for (const auto& k : config_.cleanup_config.collections) {
+        add_collection(k);
+    }
+}
+
+void
+transactions_cleanup::stop()
 {
     {
         std::unique_lock<std::mutex> lock(mutex_);
@@ -563,6 +577,12 @@ transactions_cleanup::close()
             t.join();
         }
     }
+}
+
+void
+transactions_cleanup::close()
+{
+    stop();
     CB_LOST_ATTEMPT_CLEANUP_LOG_DEBUG("all lost attempt cleanup threads closed");
     remove_client_record_from_all_buckets(client_uuid_);
 }

@@ -1,9 +1,10 @@
 if(NOT TARGET CLI11::CLI11)
+  # https://github.com/CLIUtils/CLI11/releases
   cpmaddpackage(
     NAME
     cli11
     VERSION
-    2.3.2
+    2.4.1
     GITHUB_REPOSITORY
     "cliutils/cli11"
     OPTIONS
@@ -28,6 +29,7 @@ target_link_libraries(
   CLI11
   Microsoft.GSL::GSL
   taocpp::json
+  hdr_histogram_static
   asio)
 
 if(COUCHBASE_CXX_CLIENT_STATIC_BORINGSSL AND WIN32)

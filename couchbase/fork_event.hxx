@@ -1,6 +1,6 @@
 /* -*- Mode: C++; tab-width: 4; c-basic-offset: 4; indent-tabs-mode: nil -*- */
 /*
- *   Copyright 2020-2021 Couchbase, Inc.
+ *   Copyright 2020-Present Couchbase, Inc.
  *
  *   Licensed under the Apache License, Version 2.0 (the "License");
  *   you may not use this file except in compliance with the License.
@@ -17,25 +17,23 @@
 
 #pragma once
 
-#include <map>
-#include <optional>
-#include <string>
-
-#include "core/design_document_namespace.hxx"
-
-namespace couchbase::core::management::views
+namespace couchbase
 {
-struct design_document {
-    struct view {
-        std::string name;
-        std::optional<std::string> map{};
-        std::optional<std::string> reduce{};
-    };
+enum class fork_event {
+    /**
+     * Notify the cluster that the process is about to fork.
+     */
+    prepare,
 
-    std::optional<std::string> rev;
-    std::string name;
-    design_document_namespace ns;
-    std::map<std::string, view> views;
+    /**
+     * Notify the context that the process has forked and is the parent.
+     */
+    parent,
+
+    /**
+     * Notify the context that the process has forked and is the child.
+     */
+    child,
 };
 
-} // namespace couchbase::core::management::views
+} // namespace couchbase

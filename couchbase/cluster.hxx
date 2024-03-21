@@ -23,6 +23,7 @@
 #include <couchbase/bucket_manager.hxx>
 #include <couchbase/cluster_options.hxx>
 #include <couchbase/diagnostics_options.hxx>
+#include <couchbase/fork_event.hxx>
 #include <couchbase/ping_options.hxx>
 #include <couchbase/query_index_manager.hxx>
 #include <couchbase/query_options.hxx>
@@ -40,6 +41,11 @@ namespace couchbase
 namespace core
 {
 class cluster;
+
+namespace transactions
+{
+class transactions;
+}
 } // namespace core
 class cluster_impl;
 #endif
@@ -90,6 +96,8 @@ class cluster
     auto operator=(const cluster& other) -> cluster& = default;
     auto operator=(cluster&& other) -> cluster& = default;
 
+    void notify_fork(fork_event event);
+
     void close() const;
 
     /**
@@ -101,6 +109,17 @@ class cluster
      * @volatile
      */
     explicit cluster(core::cluster core);
+
+    /**
+     * Wraps low-level implementation of the SDK & transactions
+     *
+     * @param core pointer to the low-level SDK handle
+     * @param transactions pointer to the lowe-level transactions handle
+     *
+     * @since 1.0.0
+     * @volatile
+     */
+    explicit cluster(core::cluster core, std::shared_ptr<core::transactions::transactions> transactions);
 
     /**
      * Opens a {@link bucket} with the given name.
@@ -222,7 +241,7 @@ class cluster
      * @since 1.0.0
      * @volatile
      */
-    [[nodiscard]] auto search(std::string index_name, search_request request, const search_options& = {}) const
+    [[nodiscard]] auto search(std::string index_name, search_request request, const search_options& options = {}) const
       -> std::future<std::pair<search_error_context, search_result>>;
 
     /**

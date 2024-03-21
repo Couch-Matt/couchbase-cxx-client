@@ -114,6 +114,26 @@ class ping_collector_impl
     }
 };
 
+template<typename Request>
+constexpr bool
+is_feature_supported(const Request& /* request */, const configuration_capabilities& /* capabilities */)
+{
+    return true;
+}
+
+constexpr bool
+is_feature_supported(const operations::search_request& request, const configuration_capabilities& capabilities)
+{
+    if (request.scope_name && !capabilities.supports_scoped_search_indexes()) {
+        return false;
+    }
+    if (request.vector_search && !capabilities.supports_vector_search()) {
+        return false;
+    }
+
+    return true;
+}
+
 class cluster_impl : public std::enable_shared_from_this<cluster_impl>
 {
   public:
@@ -330,6 +350,9 @@ class cluster_impl : public std::enable_shared_from_this<cluster_impl>
         if (stopped_) {
             return handler(request.make_response({ errc::network::cluster_closed }, response_type{}));
         }
+        if (!is_feature_supported(request, session_manager_->configuration_capabilities())) {
+            return handler(request.make_response({ errc::common::feature_not_available }, response_type{}));
+        }
         if constexpr (operations::is_compound_operation_v<Request>) {
             return request.execute(shared_from_this(), std::forward<Handler>(handler));
         } else {
@@ -359,8 +382,7 @@ class cluster_impl : public std::enable_shared_from_this<cluster_impl>
                         handler(request.make_response({ ec }, {}));
                         return;
                     }
-                    auto bucket_caps = config.bucket_capabilities;
-                    if (bucket_caps.find(cap) == bucket_caps.end()) {
+                    if (!config.capabilities.has_bucket_capability(cap)) {
                         handler(request.make_response({ errc::common::feature_not_available }, {}));
                         return;
                     }
@@ -511,49 +533,36 @@ class cluster_impl : public std::enable_shared_from_this<cluster_impl>
         } else {
             session_ = io::mcbp_session(id_, ctx_, origin_, dns_srv_tracker_);
         }
-        session_->bootstrap([self = shared_from_this(), handler = std::move(handler)](std::error_code ec,
-                                                                                      const topology::configuration& config) mutable {
-            if (!ec) {
-                if (self->origin_.options().network == "auto") {
-                    self->origin_.options().network = config.select_network(self->session_->bootstrap_hostname());
-                    if (self->origin_.options().network == "default") {
-                        CB_LOG_DEBUG(R"({} detected network is "{}")", self->session_->log_prefix(), self->origin_.options().network);
-                    } else {
-                        CB_LOG_INFO(R"({} detected network is "{}")", self->session_->log_prefix(), self->origin_.options().network);
-                    }
-                }
-                if (self->origin_.options().network != "default") {
-                    origin::node_list nodes;
-                    nodes.reserve(config.nodes.size());
-                    for (const auto& address : config.nodes) {
-                        auto port =
-                          address.port_or(self->origin_.options().network, service_type::key_value, self->origin_.options().enable_tls, 0);
-                        if (port == 0) {
-                            continue;
-                        }
-                        origin::node_entry node;
-                        node.first = address.hostname_for(self->origin_.options().network);
-                        node.second = std::to_string(port);
-                        nodes.emplace_back(node);
-                    }
-                    self->origin_.set_nodes(nodes);
-                    CB_LOG_INFO("replace list of bootstrap nodes with addresses of alternative network \"{}\": [{}]",
-                                self->origin_.options().network,
-                                utils::join_strings(self->origin_.get_nodes(), ","));
-                }
-                self->session_manager_->set_configuration(config, self->origin_.options());
-                self->session_->on_configuration_update(self->session_manager_);
-                self->session_->on_stop([self]() {
-                    if (self->session_) {
-                        self->session_.reset();
-                    }
-                });
-            }
-            if (ec) {
-                return self->close([ec, handler = std::move(handler)]() mutable { handler(ec); });
-            }
-            handler(ec);
-        });
+        session_->bootstrap(
+          [self = shared_from_this(), handler = std::move(handler)](std::error_code ec, const topology::configuration& config) mutable {
+              if (!ec) {
+                  if (self->origin_.options().network == "auto") {
+                      self->origin_.options().network = config.select_network(self->session_->bootstrap_hostname());
+                      if (self->origin_.options().network == "default") {
+                          CB_LOG_DEBUG(R"({} detected network is "{}")", self->session_->log_prefix(), self->origin_.options().network);
+                      } else {
+                          CB_LOG_INFO(R"({} detected network is "{}")", self->session_->log_prefix(), self->origin_.options().network);
+                      }
+                  }
+                  if (self->origin_.options().network != "default") {
+                      self->origin_.set_nodes_from_config(config);
+                      CB_LOG_INFO("replace list of bootstrap nodes with addresses of alternative network \"{}\": [{}]",
+                                  self->origin_.options().network,
+                                  utils::join_strings(self->origin_.get_nodes(), ","));
+                  }
+                  self->session_manager_->set_configuration(config, self->origin_.options());
+                  self->session_->on_configuration_update(self->session_manager_);
+                  self->session_->on_stop([self]() {
+                      if (self->session_) {
+                          self->session_.reset();
+                      }
+                  });
+              }
+              if (ec) {
+                  return self->close([ec, handler = std::move(handler)]() mutable { handler(ec); });
+              }
+              handler(ec);
+          });
     }
 
     void with_bucket_configuration(const std::string& bucket_name,

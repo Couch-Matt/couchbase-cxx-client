@@ -15,17 +15,17 @@
 
 #pragma once
 
-#include "scan_options.hxx"
+#include "range_scan_options.hxx"
 #include "timeout_defaults.hxx"
 
+#include <couchbase/best_effort_retry_strategy.hxx>
 #include <couchbase/mutation_token.hxx>
 #include <couchbase/retry_strategy.hxx>
 
-#include <cinttypes>
+#include <chrono>
+#include <cstdint>
 #include <memory>
 #include <optional>
-#include <system_error>
-#include <variant>
 #include <vector>
 
 namespace couchbase
@@ -39,6 +39,9 @@ class request_span;
 
 namespace couchbase::core
 {
+struct mutation_state {
+    std::vector<couchbase::mutation_token> tokens;
+};
 
 struct range_scan_orchestrator_options {
     static constexpr std::uint16_t default_concurrency{ 1 };
@@ -49,7 +52,7 @@ struct range_scan_orchestrator_options {
     std::uint32_t batch_byte_limit{ range_scan_continue_options::default_batch_byte_limit };
     std::uint16_t concurrency{ default_concurrency };
 
-    std::shared_ptr<couchbase::retry_strategy> retry_strategy{ nullptr };
+    std::shared_ptr<couchbase::retry_strategy> retry_strategy{ make_best_effort_retry_strategy() };
     std::chrono::milliseconds timeout{ timeout_defaults::key_value_scan_timeout };
     std::shared_ptr<couchbase::tracing::request_span> parent_span{};
 };
